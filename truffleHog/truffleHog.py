@@ -17,6 +17,7 @@ from git import Repo
 from git import NULL_TREE
 from git.objects import Commit
 from git.util import hex_to_bin
+from StringIO import StringIO
 try:
     from defaultRegexes.regexChecks import regexes
 except ImportError:
@@ -238,13 +239,20 @@ def handle_results(output, output_dir, foundIssues):
         output["foundIssues"].append(result_path)
     return output
 
-def blobs_for_commit(commit):
-    blobs_not_in_parents = [
-            [blob_diff.a_blob for blob_diff in commit.diff(parent)] for parent in commit.parents
-    ]
 
-    new_blobs = set().union(*blobs_not_in_parents)
-    return new_blobs
+def blobs_for_commit(commit):
+    blobs_not_in_parents = []
+    if commit.parents:
+        for parent in commit.parents:
+            diff_blobs = [diff.a_blob for diff in commit.diff(parent) if diff.a_blob]
+            blobs_not_in_parents.append(diff_blobs)
+    else:
+        diff_blobs = [diff.b_blob for diff in commit.diff(NULL_TREE) if diff.b_blob]
+        blobs_not_in_parents.append(diff_blobs)
+
+    return set().union(*blobs_not_in_parents)
+
+
 
 def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False, do_regex=False, do_entropy=True, custom_regexes={}):
     output = {"foundIssues": []}
@@ -253,20 +261,14 @@ def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False,
     already_searched = set()
     output_dir = tempfile.mkdtemp()
 
-    for remote_branch in repo.remotes.origin.fetch():
     commits = (Commit(repo, hex_to_bin(sha1)) for sha1 in repo.git.rev_list(all=True).split())
 
     for commit in commits:
         blobs = blobs_for_commit(commit)
-
+        if not blobs:
+            raise Exception('uh oh.. no diffs')
         for blob in blobs:
-            print blob.data_stream.read()
-
-        since_commit_reached = False
-        branch_name = remote_branch.name.split('/')[1]
-        try:
-            repo.git.checkout(remote_branch, b=branch_name)
-        except:
+            # perform secret scanning here
             pass
 
         prev_commit = None
