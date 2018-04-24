@@ -18,10 +18,12 @@ from git import NULL_TREE
 from git.objects import Commit
 from git.util import hex_to_bin
 from StringIO import StringIO
+
 try:
     from defaultRegexes.regexChecks import regexes
 except ImportError:
     from truffleHog.defaultRegexes.regexChecks import regexes
+
 
 def main():
     parser = argparse.ArgumentParser(description='Find secrets hidden in the depths of git.')
@@ -52,9 +54,16 @@ def main():
         for regex in rules:
             regexes[regex] = rules[regex]
     do_entropy = str2bool(args.do_entropy)
-    output = find_strings(args.git_url, args.since_commit, args.max_depth, args.output_json, args.do_regex, do_entropy)
+    output = find_strings(
+            args.git_url,
+            args.since_commit,
+            args.max_depth,
+            args.output_json,
+            args.do_regex,
+            do_entropy)
     project_path = output["project_path"]
     shutil.rmtree(project_path, onerror=del_rw)
+
 
 def str2bool(v):
     if v == None:
@@ -70,9 +79,11 @@ def str2bool(v):
 BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
 HEX_CHARS = "1234567890abcdefABCDEF"
 
+
 def del_rw(action, name, exc):
     os.chmod(name, stat.S_IWRITE)
     os.remove(name)
+
 
 def shannon_entropy(data, iterator):
     """
@@ -105,6 +116,7 @@ def get_strings_of_set(word, char_set, threshold=20):
         strings.append(letters)
     return strings
 
+
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -115,10 +127,12 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
+
 def clone_git_repo(git_url):
     project_path = tempfile.mkdtemp()
     Repo.clone_from(git_url, project_path)
     return project_path
+
 
 def print_results(printJson, issue):
     commit_time = issue['date']
@@ -156,6 +170,7 @@ def print_results(printJson, issue):
             print(printableDiff.encode('utf-8'))
         print("~~~~~~~~~~~~~~~~~~~~~")
 
+
 def find_entropy(printableDiff, commit_time, branch_name, prev_commit, blob, commitHash):
     stringsFound = []
     lines = printableDiff.split("\n")
@@ -187,6 +202,7 @@ def find_entropy(printableDiff, commit_time, branch_name, prev_commit, blob, com
         entropicDiff['reason'] = "High Entropy"
     return entropicDiff
 
+
 def regex_check(printableDiff, commit_time, branch_name, prev_commit, blob, commitHash, custom_regexes={}):
     if custom_regexes:
         secret_regexes = custom_regexes
@@ -211,6 +227,7 @@ def regex_check(printableDiff, commit_time, branch_name, prev_commit, blob, comm
             regex_matches.append(foundRegex)
     return regex_matches
 
+
 def diff_worker(diff, curr_commit, prev_commit, branch_name, commitHash, custom_regexes, do_entropy, do_regex, printJson):
     issues = []
     for blob in diff:
@@ -230,6 +247,7 @@ def diff_worker(diff, curr_commit, prev_commit, branch_name, commitHash, custom_
             print_results(printJson, foundIssue)
         issues += foundIssues
     return issues
+
 
 def handle_results(output, output_dir, foundIssues):
     for foundIssue in foundIssues:
