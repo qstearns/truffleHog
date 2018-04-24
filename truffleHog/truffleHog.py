@@ -271,40 +271,5 @@ def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False,
             # perform secret scanning here
             pass
 
-        prev_commit = None
-        for curr_commit in repo.iter_commits(max_count=max_depth):
-            commitHash = curr_commit.hexsha
-            if commitHash == since_commit:
-                since_commit_reached = True
-            if since_commit and since_commit_reached:
-                prev_commit = curr_commit
-                continue
-            # if not prev_commit, then curr_commit is the newest commit. And we have nothing to diff with.
-            # But we will diff the first commit with NULL_TREE here to check the oldest code.
-            # In this way, no commit will be missed.
-            if not prev_commit:
-                prev_commit = curr_commit
-                continue
-            else:
-                diff = prev_commit.diff(curr_commit, create_patch=True)
-
-            # avoid searching the same diffs
-            hashes = str(prev_commit) + str(curr_commit)
-            if hashes in already_searched:
-                prev_commit = curr_commit
-                continue
-            already_searched.add(hashes)
-
-            foundIssues = diff_worker(diff, curr_commit, prev_commit, branch_name, commitHash, custom_regexes, do_entropy, do_regex, printJson)
-            output = handle_results(output, output_dir, foundIssues)
-            prev_commit = curr_commit
-        # Handling the first commit
-        diff = curr_commit.diff(NULL_TREE, create_patch=True)
-        foundIssues = diff_worker(diff, curr_commit, prev_commit, branch_name, commitHash, custom_regexes, do_entropy, do_regex, printJson)
-        output = handle_results(output, output_dir, foundIssues)
-    output["project_path"] = project_path
-    output["clone_uri"] = git_url
-    return output
-
 if __name__ == "__main__":
     main()
