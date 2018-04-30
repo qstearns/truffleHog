@@ -11,6 +11,7 @@ import re
 import json
 import stat
 from git import Repo, NULL_TREE
+import dulwich.repo as dRepo
 from git.objects import Commit
 from git.util import hex_to_bin
 from StringIO import StringIO
@@ -133,6 +134,26 @@ def blobs_for_commit(commit):
     return set().union(*blobs_not_in_parents)
 
 
+def flatten_blobs(changes):
+    added_shas = set()
+    removed_shas = set()
+
+    for change in changes:
+        if isinstance(change, list):
+            for merge_change in change:
+                if merge_change.type == 'delete':
+                    removed_shas.add(merge_change.old.sha)
+                else:
+                    added_shas.add(merge_change.new.sha)
+        else:
+            if change.type == 'delete':
+                removed_shas.add(change.old.sha)
+            else:
+                added_shas.add(change.new.sha)
+
+    return added_shas - removed_shas
+
+
 def detect_shannon_entropy(line):
     for word in line.split():
         base64_strings = get_strings_of_set(word, BASE64_CHARS)
@@ -170,15 +191,21 @@ def scan_blob(blob_stream):
 
 def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False, do_regex=False, do_entropy=True, custom_regexes={}):
     project_path = clone_git_repo(git_url)
-    repo = Repo(project_path)
+    gp_repo = Repo(project_path)
+    repo = dRepo.Repo(project_path)
     output_dir = tempfile.mkdtemp()
 
-    commits = (Commit(repo, hex_to_bin(sha1)) for sha1 in repo.git.rev_list(all=True).split())
+    #  commits = (Commit(repo, hex_to_bin(sha1)) for sha1 in repo.git.rev_list(all=True).split())
+    history_entries = repo.get_walker()
 
-    for commit in commits:
-        blobs = blobs_for_commit(commit)
+    for entry in history_entries:
+        try:
+            blobs = flatten_blobs(entry.changes())
+        except:
+            pdb.set_trace()
+            raise('oh damn')
         for blob in blobs:
-            if scan_blob(StringIO(repo.git.cat_file('-p', blob.hexsha))):
+            if scan_blob(StringIO(gp_repo.git.cat_file('-p', blob))):
                 print('found ya')
                 break
 
