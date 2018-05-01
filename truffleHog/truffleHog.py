@@ -15,6 +15,7 @@ import dulwich.repo as dRepo
 from git.objects import Commit
 from git.util import hex_to_bin
 from StringIO import StringIO
+from dulwich.objects import Blob
 import pdb
 
 try:
@@ -177,16 +178,16 @@ compiled_expr = re.compile('|'.join(named_regexes))
 
 
 def detect_regex(line):
-    return compiled_expr.search(line)
+    return compiled_expr.finditer(line)
 
 
-def scan_blob(blob_stream):
-    for line in blob_stream:
-        if detect_shannon_entropy(line):
-            return True
+def scan_blob(blob_chunks):
+    issues = []
+    for idx, line in enumerate(blob_chunks):
+        issues.extend([(idx, match) for match in detect_regex(line)])
+        #  issues.extend([(idx, match) for match in detect_shannon_entropy(line)])
 
-        if detect_regex(line):
-            return True
+    return issues
 
 
 def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False, do_regex=False, do_entropy=True, custom_regexes={}):
@@ -195,22 +196,55 @@ def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False,
     repo = dRepo.Repo(project_path)
     output_dir = tempfile.mkdtemp()
 
-    #  commits = (Commit(repo, hex_to_bin(sha1)) for sha1 in repo.git.rev_list(all=True).split())
-    history_entries = repo.get_walker()
+    visited = set()
 
-    for entry in history_entries:
-        try:
-            blobs = flatten_blobs(entry.changes())
-        except:
-            pdb.set_trace()
-            raise('oh damn')
-        for blob in blobs:
-            if scan_blob(StringIO(gp_repo.git.cat_file('-p', blob))):
-                print('found ya')
+    count = 0
+    for ref in repo.get_refs().values():
+        history_entries = repo.get_walker(ref)
+
+        for entry in history_entries:
+            if entry.commit.sha in visited:
                 break
+            else:
+                visited.add(entry.commit.sha)
 
+            blobs = flatten_blobs(entry.changes())
+
+            for blob_sha in blobs:
+                blob_chunks = repo.get_object(blob_sha).as_raw_chunks()
+                issues = scan_blob(blob_chunks)
+                count += len(issues)
+                if issues:
+                    print_issues(issues, blob_chunks)
+
+    print(str(count) + "issues found.")
     return {"project_path": project_path}
 
+
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+
+def print_issues(issues, blob_text):
+    pass
+    #  for issue in issues:
+        #  idx, match = issue
+        #  print("------------------")
+        #  chunk = blob_text[idx]
+        #  first_part = chunk[:match.start()]
+        #  highlighted = bcolors.WARNING + match.group(0) + bcolors.ENDC
+        #  last_part = chunk[match.end():]
+        #  formatted = first_part + highlighted + last_part
+        #  print(formatted)
+        #  print(blob_text[idx+1:idx+2])
+        #  print("------------------")
 
 if __name__ == "__main__":
     main()
