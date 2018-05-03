@@ -10,7 +10,8 @@ setup(
     license='GNU',
     packages = ['truffleHog', 'truffleHog.defaultRegexes'],
     install_requires=[
-        'GitPython == 2.1.1'
+        'GitPython == 2.1.1',
+        'dulwich==0.19.2'
     ],
     entry_points = {
       'console_scripts': ['trufflehog = truffleHog.truffleHog:main'],
