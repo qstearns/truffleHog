@@ -16,7 +16,10 @@ def test_cloning():
 
 
 def test_unicode_expection():
+    def nop_print(*args):
+        pass
+
     try:
-        truffleHog.find_strings("https://github.com/dxa4481/tst.git")
+        truffleHog.find_strings("https://github.com/dxa4481/tst.git", nop_print)
     except UnicodeEncodeError:
         pytest.fail("Unicode print error")

@@ -8,20 +8,18 @@ import argparse
 import tempfile
 import os
 import re
-import json
 import stat
-from git import Repo, NULL_TREE
+from git import Repo
 import dulwich.repo as dRepo
-from git.objects import Commit
-from git.util import hex_to_bin
 from StringIO import StringIO
-from dulwich.objects import Blob
-import pdb
 
 try:
     from defaultRegexes.regexChecks import regexes
+    from presenters import print_json
+
 except ImportError:
     from truffleHog.defaultRegexes.regexChecks import regexes
+    from truffleHog.presenters import print_json
 
 
 def main():
@@ -32,6 +30,7 @@ def main():
     parser.add_argument("--entropy", dest="do_entropy", help="Enable entropy checks")
     parser.add_argument("--since_commit", dest="since_commit", help="Only scan from a given commit hash")
     parser.add_argument("--max_depth", dest="max_depth", help="The max commit depth to go back when searching for secrets")
+    parser.add_argument("--local-checkout", dest="local_checkout", action="store_true", help="Check out a repo from a local path instead of cloning")
     parser.add_argument('git_url', type=str, help='URL for secret searching')
     parser.set_defaults(regex=False)
     parser.set_defaults(rules={})
@@ -53,15 +52,10 @@ def main():
         for regex in rules:
             regexes[regex] = rules[regex]
     do_entropy = str2bool(args.do_entropy)
-    output = find_strings(
+    find_strings(
             args.git_url,
-            args.since_commit,
-            args.max_depth,
-            args.output_json,
-            args.do_regex,
-            do_entropy)
-    project_path = output["project_path"]
-    shutil.rmtree(project_path, onerror=del_rw)
+            print_json,
+            local_checkout=args.local_checkout)
 
 
 def str2bool(v):
@@ -75,13 +69,55 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
-HEX_CHARS = "1234567890abcdefABCDEF"
-
-
 def del_rw(action, name, exc):
     os.chmod(name, stat.S_IWRITE)
     os.remove(name)
+
+
+def clone_git_repo(git_url):
+    project_path = tempfile.mkdtemp()
+    Repo.clone_from(git_url, project_path)
+    return project_path
+
+
+def flatten_blobs(changes):
+    added_shas = []
+    removed_shas = set()
+
+    for change in changes:
+        if isinstance(change, list):
+            for merge_change in change:
+                if merge_change.type == 'delete':
+                    removed_shas.add(merge_change.old.sha)
+                else:
+                    added_shas.append(merge_change)
+        else:
+            if change.type == 'delete':
+                removed_shas.add(change.old.sha)
+            else:
+                added_shas.append(change)
+
+    return [change for change in added_shas if change not in removed_shas]
+
+
+BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
+HEX_CHARS = "1234567890abcdefABCDEF"
+
+base64_regex = re.compile("(?P<entropy>[0-9A-Za-z+/=]+)")
+hex_regex = re.compile("(?P<entropy>[0-9A-Fa-f]+)")
+
+
+def detect_shannon_entropy(line):
+    issues = []
+    for match in base64_regex.finditer(line):
+        if len(match.group(0)) > 19 and shannon_entropy(match.group(0), BASE64_CHARS) > 4.5:
+            issues.append(match)
+
+    for match in hex_regex.finditer(line):
+        if len(match.group(0)) > 19 and shannon_entropy(match.group(0), HEX_CHARS) > 3:
+            issues.append(match)
+
+    return issues
 
 
 def shannon_entropy(data, iterator):
@@ -95,78 +131,10 @@ def shannon_entropy(data, iterator):
         p_x = float(data.count(x))/len(data)
         if p_x > 0:
             entropy += - p_x*math.log(p_x, 2)
+            if entropy > 4.5:
+                return entropy
+
     return entropy
-
-
-def get_strings_of_set(word, char_set, threshold=20):
-    count = 0
-    letters = ""
-    strings = []
-    for char in word:
-        if char in char_set:
-            letters += char
-            count += 1
-        else:
-            if count > threshold:
-                strings.append(letters)
-            letters = ""
-            count = 0
-    if count > threshold:
-        strings.append(letters)
-    return strings
-
-
-def clone_git_repo(git_url):
-    project_path = tempfile.mkdtemp()
-    Repo.clone_from(git_url, project_path)
-    return project_path
-
-
-def blobs_for_commit(commit):
-    blobs_not_in_parents = []
-    if commit.parents:
-        for parent in commit.parents:
-            diff_blobs = [diff.a_blob for diff in commit.diff(parent) if diff.a_blob]
-            blobs_not_in_parents.append(diff_blobs)
-    else:
-        diff_blobs = [diff.b_blob for diff in commit.diff(NULL_TREE) if diff.b_blob]
-        blobs_not_in_parents.append(diff_blobs)
-
-    return set().union(*blobs_not_in_parents)
-
-
-def flatten_blobs(changes):
-    added_shas = set()
-    removed_shas = set()
-
-    for change in changes:
-        if isinstance(change, list):
-            for merge_change in change:
-                if merge_change.type == 'delete':
-                    removed_shas.add(merge_change.old.sha)
-                else:
-                    added_shas.add(merge_change.new.sha)
-        else:
-            if change.type == 'delete':
-                removed_shas.add(change.old.sha)
-            else:
-                added_shas.add(change.new.sha)
-
-    return added_shas - removed_shas
-
-
-def detect_shannon_entropy(line):
-    for word in line.split():
-        base64_strings = get_strings_of_set(word, BASE64_CHARS)
-        hex_strings = get_strings_of_set(word, HEX_CHARS)
-        for string in base64_strings:
-            b64Entropy = shannon_entropy(string, BASE64_CHARS)
-            if b64Entropy > 4.5:
-                return True
-        for string in hex_strings:
-            hexEntropy = shannon_entropy(string, HEX_CHARS)
-            if hexEntropy > 3:
-                return True
 
 
 named_regexes = []
@@ -181,70 +149,46 @@ def detect_regex(line):
     return compiled_expr.finditer(line)
 
 
-def scan_blob(blob_chunks):
+def scan_blob(blob_lines):
     issues = []
-    for idx, line in enumerate(blob_chunks):
+    for idx, line in enumerate(blob_lines):
         issues.extend([(idx, match) for match in detect_regex(line)])
-        #  issues.extend([(idx, match) for match in detect_shannon_entropy(line)])
+        issues.extend([(idx, match) for match in detect_shannon_entropy(line)])
 
     return issues
 
 
-def find_strings(git_url, since_commit=None, max_depth=1000000, printJson=False, do_regex=False, do_entropy=True, custom_regexes={}):
-    project_path = clone_git_repo(git_url)
-    gp_repo = Repo(project_path)
-    repo = dRepo.Repo(project_path)
-    output_dir = tempfile.mkdtemp()
+def find_strings(git_url, print_issues, local_checkout=False):
+    project_path = ''
+    if local_checkout:
+        repo = dRepo.Repo(git_url)
+    else:
+        project_path = clone_git_repo(git_url)
+        repo = dRepo.Repo(project_path)
 
     visited = set()
 
-    count = 0
     for ref in repo.get_refs().values():
         history_entries = repo.get_walker(ref)
 
         for entry in history_entries:
-            if entry.commit.sha in visited:
+            if entry.commit.id in visited:
                 break
             else:
-                visited.add(entry.commit.sha)
+                visited.add(entry.commit.id)
 
-            blobs = flatten_blobs(entry.changes())
+            changes = flatten_blobs(entry.changes())
 
-            for blob_sha in blobs:
-                blob_chunks = repo.get_object(blob_sha).as_raw_chunks()
-                issues = scan_blob(blob_chunks)
-                count += len(issues)
+            for change in changes:
+                blob = repo.get_object(change.new.sha)
+                blob_lines = StringIO(blob.as_raw_string())
+                issues = scan_blob(blob_lines)
                 if issues:
-                    print_issues(issues, blob_chunks)
+                    print_issues(issues, blob_lines, change, entry.commit, repo)
 
-    print(str(count) + "issues found.")
-    return {"project_path": project_path}
+    if project_path:
+        shutil.rmtree(project_path, onerror=del_rw)
 
-
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-
-def print_issues(issues, blob_text):
-    pass
-    #  for issue in issues:
-        #  idx, match = issue
-        #  print("------------------")
-        #  chunk = blob_text[idx]
-        #  first_part = chunk[:match.start()]
-        #  highlighted = bcolors.WARNING + match.group(0) + bcolors.ENDC
-        #  last_part = chunk[match.end():]
-        #  formatted = first_part + highlighted + last_part
-        #  print(formatted)
-        #  print(blob_text[idx+1:idx+2])
-        #  print("------------------")
 
 if __name__ == "__main__":
     main()
