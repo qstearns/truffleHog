@@ -21,11 +21,12 @@ def print_json(issues, lines, change, commit, repo):
     #  else:
         #  repo_string = 'git.liveramp.net/' + urlparse(url).path.split('.')[0]
 
-    for idx, match in issues:
+    for line_no, match in issues:
         #  url = repo_string + "/blob/{commit_sha}/{blob_path}#L{line_no}".format(
                 #  commit_sha=commit.id, blob_path=change.new.path, line_no=idx+1)
         json_issues = {
             #  "git_url": url,
+            "line_number": line_no + 1,
             "violating_text": match.group(0),
             "starting_column": match.start(),
             "ending_column": match.end(),

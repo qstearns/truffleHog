@@ -80,7 +80,7 @@ def clone_git_repo(git_url):
     return project_path
 
 
-def flatten_blobs(changes):
+def flatten_changes(changes):
     added_shas = []
     removed_shas = set()
 
@@ -97,7 +97,7 @@ def flatten_blobs(changes):
             else:
                 added_shas.append(change)
 
-    return [change for change in added_shas if change not in removed_shas]
+    return [change for change in added_shas if change.new.sha not in removed_shas]
 
 
 BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
@@ -168,8 +168,8 @@ def find_strings(git_url, print_issues, local_checkout=False):
 
     visited = set()
 
-    for ref in repo.get_refs().values():
-        history_entries = repo.get_walker(ref)
+    for rev in repo.get_refs().values():
+        history_entries = repo.get_walker(rev)
 
         for entry in history_entries:
             if entry.commit.id in visited:
@@ -177,10 +177,13 @@ def find_strings(git_url, print_issues, local_checkout=False):
             else:
                 visited.add(entry.commit.id)
 
-            changes = flatten_blobs(entry.changes())
+            changes = flatten_changes(entry.changes())
 
             for change in changes:
-                blob = repo.get_object(change.new.sha)
+                if change.new.sha in repo:
+                    blob = repo.get_object(change.new.sha)
+                else:
+                    next
                 blob_lines = StringIO(blob.as_raw_string())
                 issues = scan_blob(blob_lines)
                 if issues:
